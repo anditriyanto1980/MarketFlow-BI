@@ -18,13 +18,19 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/src/lib/auth/auth-context';
 import { hasPermission } from '@/src/lib/auth/permissions';
-import { processImportFile, setManualReportType } from '@/src/services/import.service';
+import {
+  processImportFile,
+  setManualReportType,
+  runStorageHealthTest,
+  type StorageHealthTestResult,
+} from '@/src/services/import.service';
 import { runDetectionUnitTests } from '@/src/lib/import/detection/shopeeDetector.test';
 import { Button } from '@/src/components/ui/button';
 import { Card, CardHeader } from '@/src/components/ui/card';
 import { Badge } from '@/src/components/ui/badge';
 import { StatusBadge } from '@/src/components/shared/StatusBadge';
 import { PageHeader } from '@/src/components/shared/PageHeader';
+import { firebaseConfig } from '@/src/lib/firebase/config';
 import { getReadableErrorMessage } from '@/src/utils/errors';
 import { formatDateTime } from '@/src/utils/dates';
 import { ImportDetailView } from './ImportDetailView';
@@ -46,11 +52,17 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [rawErrorCode, setRawErrorCode] = useState<string | null>(null);
 
   // Result state
   const [duplicateFile, setDuplicateFile] = useState<ImportFile | null>(null);
   const [processedFile, setProcessedFile] = useState<ImportFile | null>(null);
   const [detectionResult, setDetectionResult] = useState<DetectionResult | undefined>(undefined);
+
+  // Storage Health Test state
+  const [isTestingStorage, setIsTestingStorage] = useState(false);
+  const [showStorageTestModal, setShowStorageTestModal] = useState(false);
+  const [storageTestResult, setStorageTestResult] = useState<StorageHealthTestResult | null>(null);
 
   // Viewing detail of an imported file
   const [detailFile, setDetailFile] = useState<ImportFile | null>(null);
@@ -94,6 +106,7 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
   const handleFileSelection = (file: File) => {
     // Reset previous states
     setErrorMessage(null);
+    setRawErrorCode(null);
     setDuplicateFile(null);
     setProcessedFile(null);
     setDetectionResult(undefined);
@@ -118,6 +131,7 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
 
     setIsProcessing(true);
     setErrorMessage(null);
+    setRawErrorCode(null);
     setDuplicateFile(null);
     setProcessedFile(null);
 
@@ -141,11 +155,34 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
       setProcessedFile(result.importFile);
       setDetectionResult(result.detectionResult);
     } catch (err: unknown) {
-      console.error('[IMPORT] Upload flow failed:', err);
+      console.error('[IMPORT DEBUG] Upload flow failed:', err);
+      const errObj = err as { code?: string; message?: string };
+      const code = errObj?.code || (err instanceof Error && err.message.includes('storage/bucket-not-found') ? 'storage/bucket-not-found' : null);
+      setRawErrorCode(code);
       setErrorMessage(getReadableErrorMessage(err));
     } finally {
       setIsProcessing(false);
       setProcessingStage('');
+    }
+  };
+
+  const handleRunStorageHealthCheck = async () => {
+    if (!currentBusiness || !currentUser) return;
+    setIsTestingStorage(true);
+    setShowStorageTestModal(true);
+    try {
+      const res = await runStorageHealthTest(currentBusiness.id, currentUser.uid);
+      setStorageTestResult(res);
+    } catch (err: unknown) {
+      setStorageTestResult({
+        success: false,
+        errorCode: 'storage/unknown',
+        errorMessage: String(err),
+        storageBucket: '',
+        storagePath: '',
+      });
+    } finally {
+      setIsTestingStorage(false);
     }
   };
 
@@ -212,6 +249,15 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
         subtitle="Upload berkas XLSX / CSV raw langsung dari Shopee Seller Centre. Sistem akan mendeteksi otomatis tipe laporan dan menghitung checksum SHA-256."
         actions={
           <div className="flex items-center gap-2.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRunStorageHealthCheck}
+              icon={<HardDrive className="w-3.5 h-3.5 text-blue-400" />}
+              isLoading={isTestingStorage}
+            >
+              Diagnostik Storage
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -309,9 +355,15 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
       {errorMessage && (
         <div className="p-4 rounded-xl bg-red-950/60 border border-red-800/80 flex items-start gap-3 text-xs text-red-200">
           <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-          <div className="space-y-1">
+          <div className="space-y-1.5 flex-1">
             <span className="font-semibold text-red-100">Gagal Mengunggah Berkas</span>
             <p>{errorMessage}</p>
+            {rawErrorCode && (
+              <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/60 border border-red-800/60 font-mono text-[10px] text-red-300">
+                <span>Firebase Storage Error Code:</span>
+                <strong className="text-red-200">{rawErrorCode}</strong>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -542,6 +594,96 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
 
             <div className="pt-3 flex justify-end">
               <Button size="sm" variant="secondary" onClick={() => setShowTestModal(false)}>
+                Tutup
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Direct Storage Health Check (Section 11) */}
+      {showStorageTestModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl max-w-xl w-full p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-5 h-5 text-blue-400" />
+                <h3 className="font-bold text-stone-100 text-base">Hasil Diagnostik Firebase Storage</h3>
+              </div>
+              {storageTestResult && (
+                <Badge variant={storageTestResult.success ? 'success' : 'danger'}>
+                  {storageTestResult.success ? 'PASS (READY)' : 'FAIL (UNCONFIGURED)'}
+                </Badge>
+              )}
+            </div>
+
+            {isTestingStorage ? (
+              <div className="p-8 text-center space-y-3">
+                <RefreshCw className="w-8 h-8 text-blue-400 animate-spin mx-auto" />
+                <p className="text-xs text-stone-300">
+                  Menguji upload file tes (marketflow-storage-test.txt) ke Firebase Storage...
+                </p>
+              </div>
+            ) : storageTestResult ? (
+              <div className="space-y-3 text-xs">
+                <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-stone-400">Target Storage Bucket:</span>
+                    <span className="font-mono text-stone-200">{storageTestResult.storageBucket || 'Tidak Terdefinisi'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-stone-400">Target Path:</span>
+                    <span className="font-mono text-stone-300 text-[11px] truncate max-w-xs">{storageTestResult.storagePath}</span>
+                  </div>
+                  {storageTestResult.httpStatus && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-stone-400">HTTP Status:</span>
+                      <span className="font-mono text-red-400 font-bold">{storageTestResult.httpStatus} (Not Found)</span>
+                    </div>
+                  )}
+                  {storageTestResult.errorCode && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-stone-400">Firebase Error Code:</span>
+                      <span className="font-mono text-red-400 font-bold">{storageTestResult.errorCode}</span>
+                    </div>
+                  )}
+                </div>
+
+                {storageTestResult.success ? (
+                  <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-800 text-emerald-200 flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-emerald-100">Firebase Storage Aktif & Berfungsi</p>
+                      <p className="text-[11px] mt-0.5 text-emerald-300">
+                        Upload tes berhasil disimpan. Bucket terkonfigurasi dengan benar.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-800 text-red-200 flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-red-100">Root Cause Terdeteksi:</p>
+                      <p className="text-[11px] text-red-300 leading-relaxed">
+                        {storageTestResult.errorMessage}
+                      </p>
+                      <div className="mt-2 pt-2 border-t border-red-900/60 text-[11px] text-stone-300">
+                        <strong>Langkah Penyelesaian di Firebase Console:</strong>
+                        <ol className="list-decimal ml-4 mt-1 space-y-0.5 text-stone-400">
+                          <li>Buka <strong>console.firebase.google.com</strong></li>
+                          <li>Pilih project <strong>{firebaseConfig.projectId}</strong></li>
+                          <li>Masuk ke menu <strong>Build &gt; Storage</strong> di sidebar kiri</li>
+                          <li>Klik tombol <strong>Get Started</strong> lalu pilih lokasi cloud storage</li>
+                        </ol>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            <div className="pt-3 flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setShowStorageTestModal(false)}>
                 Tutup
               </Button>
             </div>

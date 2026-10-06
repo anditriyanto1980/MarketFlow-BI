@@ -93,17 +93,17 @@ export function getReadableErrorMessage(error: unknown): string {
     if (msg.includes('network-request-failed') || msg.includes('the client is offline')) {
       return 'Koneksi jaringan terputus. Periksa koneksi internet Anda.';
     }
+    if (msg.includes('storage/bucket-not-found') || msg.includes('404')) {
+      return 'Bucket Firebase Storage belum diaktifkan pada project Firebase. Silakan buka Firebase Console dan aktifkan Storage (menu Build > Storage).';
+    }
     if (msg.includes('storage/unauthorized')) {
       return 'Anda tidak memiliki izin untuk mengunggah file ke workspace ini.';
     }
     if (msg.includes('storage/unknown')) {
       return 'Terjadi masalah saat menyimpan file. Silakan coba lagi.';
     }
-    if (msg.includes('storage/canceled') || msg.includes('Proses upload terlalu lama') || msg.includes('storage/retry-limit-exceeded')) {
+    if (msg.includes('storage/canceled') || msg.includes('storage/retry-limit-exceeded') || msg.includes('Proses upload terlalu lama')) {
       return 'Proses upload terlalu lama. Periksa koneksi dan konfigurasi Firebase.';
-    }
-    if (msg.includes('storage/bucket-not-found')) {
-      return 'Bucket penyimpanan Cloud Storage tidak ditemukan. Periksa konfigurasi project Firebase.';
     }
     if (msg.includes('Missing or insufficient permissions') || msg.includes('permission-denied')) {
       return 'Izin akses Firebase belum sesuai.';

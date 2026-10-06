@@ -28,7 +28,102 @@ import type {
 } from '@/src/types/import';
 
 // ==========================================
-// 1. DUPLICATE CHECK BY SHA-256
+// 1. STORAGE HEALTH TEST (SECTION 11)
+// ==========================================
+
+export interface StorageHealthTestResult {
+  success: boolean;
+  errorCode?: string;
+  errorMessage?: string;
+  storageBucket: string;
+  storagePath: string;
+  httpStatus?: number;
+}
+
+export async function runStorageHealthTest(
+  businessId: string,
+  userId: string
+): Promise<StorageHealthTestResult> {
+  const fileName = 'marketflow-storage-test.txt';
+  const storagePath = `businesses/${businessId}/storage-test/${userId}/${fileName}`;
+  const bucket = firebaseConfig.storageBucket || '';
+
+  console.log('[STORAGE HEALTH TEST] Starting direct health check...');
+  console.log(`[STORAGE HEALTH TEST] storageBucket = ${bucket}`);
+  console.log(`[STORAGE HEALTH TEST] storagePath = ${storagePath}`);
+
+  // 1. Direct REST probe to verify bucket existence
+  try {
+    const probeUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o`;
+    const res = await fetch(probeUrl);
+    if (res.status === 404) {
+      console.error(`[STORAGE HEALTH TEST] Bucket "${bucket}" returned HTTP 404 (Not Found).`);
+      return {
+        success: false,
+        errorCode: 'storage/bucket-not-found',
+        errorMessage: `Bucket "${bucket}" belum diaktifkan/dibuat di Google Cloud Storage (HTTP 404 Not Found). Silakan buka Firebase Console dan klik "Get Started" pada menu Build > Storage.`,
+        storageBucket: bucket,
+        storagePath,
+        httpStatus: 404,
+      };
+    }
+  } catch (probeErr) {
+    console.warn('[STORAGE HEALTH TEST] Probe network check:', probeErr);
+  }
+
+  // 2. Direct small file upload via SDK
+  try {
+    const testBlob = new Blob(['MarketFlow Storage Health Check: ' + new Date().toISOString()], {
+      type: 'text/plain',
+    });
+    const storageRef = ref(storage, storagePath);
+
+    await new Promise<void>((resolve, reject) => {
+      const task = uploadBytesResumable(storageRef, testBlob, {
+        contentType: 'text/plain',
+        customMetadata: { test: 'true', userId, timestamp: new Date().toISOString() },
+      });
+
+      const timer = setTimeout(() => {
+        try { task.cancel(); } catch { /* ignore */ }
+        reject(new Error('storage/retry-limit-exceeded: Waktu tunggu habis saat menghubungi storage bucket.'));
+      }, 8000);
+
+      task.on(
+        'state_changed',
+        null,
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve();
+        }
+      );
+    });
+
+    console.log('[STORAGE HEALTH TEST] UPLOAD SUCCESS');
+    return {
+      success: true,
+      storageBucket: bucket,
+      storagePath,
+    };
+  } catch (err: unknown) {
+    const errObj = err as { code?: string; message?: string };
+    console.error('[STORAGE HEALTH TEST] Direct upload error:', errObj);
+    return {
+      success: false,
+      errorCode: errObj?.code || 'storage/unknown',
+      errorMessage: errObj?.message || String(err),
+      storageBucket: bucket,
+      storagePath,
+    };
+  }
+}
+
+// ==========================================
+// 2. DUPLICATE CHECK BY SHA-256
 // ==========================================
 
 export async function findExistingImportByHash(
@@ -37,7 +132,7 @@ export async function findExistingImportByHash(
   timeoutMs = 8000
 ): Promise<ImportFile | null> {
   const path = `businesses/${businessId}/importFiles`;
-  console.log(`[IMPORT] duplicate-check-start: hash=${fileHash}`);
+  console.log(`[IMPORT DEBUG] duplicate-check-start: hash=${fileHash}`);
   try {
     const q = query(
       collection(db, path),
@@ -49,14 +144,14 @@ export async function findExistingImportByHash(
       getDocs(q),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error('Proses upload terlalu lama. Periksa koneksi dan konfigurasi Firebase.')),
+          () => reject(new Error('Proses pengecekan duplikasi timeout.')),
           timeoutMs
         )
       ),
     ]);
 
     const found = !snap.empty;
-    console.log(`[IMPORT] duplicate-check-complete: found=${found}`);
+    console.log(`[IMPORT DEBUG] duplicate-check-complete: found=${found}`);
     if (found) {
       const d = snap.docs[0];
       return {
@@ -66,8 +161,8 @@ export async function findExistingImportByHash(
     }
     return null;
   } catch (error) {
-    console.error(`[IMPORT] duplicate-check-error:`, error);
-    if (error instanceof Error && error.message.includes('terlalu lama')) {
+    console.error('[IMPORT DEBUG] duplicate-check-error:', error);
+    if (error instanceof Error && error.message.includes('timeout')) {
       throw error;
     }
     handleFirestoreError(error, OperationType.LIST, path);
@@ -75,21 +170,44 @@ export async function findExistingImportByHash(
 }
 
 // ==========================================
-// 2. FIREBASE STORAGE RAW FILE UPLOAD
+// 3. FIREBASE STORAGE RAW FILE UPLOAD
 // ==========================================
 
-async function executeUploadTask(
-  storageInstance: typeof storage,
+export async function uploadRawFileToStorage(
   businessId: string,
   importFileId: string,
-  cleanFileName: string,
+  originalFileName: string,
   fileData: Blob | Uint8Array,
-  mimeType?: string,
-  timeoutMs = 15000
+  mimeType?: string
 ): Promise<string> {
+  const cleanFileName = originalFileName.replace(/[^a-zA-Z0-9._\-]/g, '_');
   const storagePath = `businesses/${businessId}/imports/${importFileId}/original/${cleanFileName}`;
-  console.log(`[IMPORT] storage-upload-start: path=${storagePath}`);
-  const storageRef = ref(storageInstance, storagePath);
+  const bucket = firebaseConfig.storageBucket || '';
+
+  // Required Section 7 Debug Logging:
+  console.log(`[IMPORT DEBUG] businessId = ${businessId}`);
+  console.log(`[IMPORT DEBUG] importFileId = ${importFileId}`);
+  console.log(`[IMPORT DEBUG] storagePath = ${storagePath}`);
+  console.log(`[IMPORT DEBUG] storageBucket = ${bucket}`);
+
+  // Pre-flight check: Verify if the Storage Bucket exists before allowing SDK 10-minute retry loop
+  try {
+    const probeRes = await fetch(`https://firebasestorage.googleapis.com/v0/b/${bucket}/o`);
+    if (probeRes.status === 404) {
+      console.error(`[IMPORT DEBUG] Firebase Storage Error Code: storage/bucket-not-found`);
+      console.error(`[IMPORT DEBUG] Firebase Storage Error Message: Bucket "${bucket}" does not exist (404 Not Found).`);
+      throw new Error(
+        `storage/bucket-not-found: Bucket "${bucket}" belum diaktifkan di Firebase Console. Buka Firebase Console > Build > Storage dan klik "Get Started".`
+      );
+    }
+  } catch (fetchErr: unknown) {
+    if (fetchErr instanceof Error && fetchErr.message.includes('storage/bucket-not-found')) {
+      throw fetchErr;
+    }
+    // Network or other probe error, continue to SDK
+  }
+
+  const storageRef = ref(storage, storagePath);
 
   return new Promise((resolve, reject) => {
     let timeoutTimer: NodeJS.Timeout | null = null;
@@ -107,43 +225,37 @@ async function executeUploadTask(
     timeoutTimer = setTimeout(() => {
       if (!isSettled) {
         isSettled = true;
-        console.warn(`[IMPORT] storage-upload timeout after ${timeoutMs}ms, cancelling task...`);
+        console.warn(`[IMPORT DEBUG] storage-upload timeout after 15000ms, cancelling task...`);
         try {
           uploadTask.cancel();
         } catch {
-          // ignore cancel error
+          // ignore
         }
-        reject(new Error('Proses upload terlalu lama. Periksa koneksi dan konfigurasi Firebase.'));
+        reject(new Error('storage/retry-limit-exceeded: Proses upload terlalu lama. Periksa koneksi dan konfigurasi Firebase.'));
       }
-    }, timeoutMs);
+    }, 15000);
 
     uploadTask.on(
       'state_changed',
       (snapshot) => {
         const progress = snapshot.totalBytes > 0 ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 : 0;
-        console.log(`[IMPORT] storage-upload progress: ${progress.toFixed(0)}%`);
+        console.log(`[IMPORT DEBUG] storage-upload progress: ${progress.toFixed(0)}%`);
       },
       (error) => {
         if (!isSettled) {
           isSettled = true;
           if (timeoutTimer) clearTimeout(timeoutTimer);
-          console.error('[IMPORT] storage-upload error:', error);
-          if (error.code === 'storage/unauthorized') {
-            reject(new Error('Anda tidak memiliki izin untuk mengunggah file ke workspace ini.'));
-          } else if (error.code === 'storage/canceled' || error.code === 'storage/retry-limit-exceeded') {
-            reject(new Error('Proses upload terlalu lama. Periksa koneksi dan konfigurasi Firebase.'));
-          } else if (error.code === 'storage/bucket-not-found') {
-            reject(error);
-          } else {
-            reject(new Error('Terjadi masalah saat menyimpan file. Silakan coba lagi.'));
-          }
+          // Required Section 9 Real Firebase Error Logging:
+          console.error(`[IMPORT DEBUG] Firebase Storage Error Code: ${error.code}`);
+          console.error(`[IMPORT DEBUG] Firebase Storage Error Message: ${error.message}`);
+          reject(error);
         }
       },
       () => {
         if (!isSettled) {
           isSettled = true;
           if (timeoutTimer) clearTimeout(timeoutTimer);
-          console.log(`[IMPORT] storage-upload-complete: ${storagePath}`);
+          console.log(`[IMPORT DEBUG] storage-upload-complete: ${storagePath}`);
           resolve(storagePath);
         }
       }
@@ -151,39 +263,8 @@ async function executeUploadTask(
   });
 }
 
-export async function uploadRawFileToStorage(
-  businessId: string,
-  importFileId: string,
-  originalFileName: string,
-  fileData: Blob | Uint8Array,
-  mimeType?: string
-): Promise<string> {
-  const cleanFileName = originalFileName.replace(/[^a-zA-Z0-9._\-]/g, '_');
-
-  try {
-    return await executeUploadTask(storage, businessId, importFileId, cleanFileName, fileData, mimeType, 15000);
-  } catch (err: unknown) {
-    const errorObj = err as { code?: string; message?: string };
-    if (errorObj?.code === 'storage/bucket-not-found' || errorObj?.message?.includes('bucket-not-found')) {
-      const rawBucket = firebaseConfig.storageBucket || '';
-      if (rawBucket.includes('firebasestorage.app')) {
-        const fallbackBucket = rawBucket.replace('firebasestorage.app', 'appspot.com');
-        console.warn(`[IMPORT] Primary bucket not found, attempting fallback to: ${fallbackBucket}`);
-        try {
-          const fallbackStorage = getStorage(app, fallbackBucket);
-          fallbackStorage.maxUploadRetryTime = 12000;
-          return await executeUploadTask(fallbackStorage, businessId, importFileId, cleanFileName, fileData, mimeType, 15000);
-        } catch (fallbackErr) {
-          console.error('[IMPORT] Fallback storage also failed:', fallbackErr);
-        }
-      }
-    }
-    throw err;
-  }
-}
-
 // ==========================================
-// 3. MASTER IMPORT UPLOAD & DETECTION FLOW
+// 4. MASTER IMPORT UPLOAD & DETECTION FLOW
 // ==========================================
 
 export interface ProcessImportResult {
@@ -212,7 +293,7 @@ export async function processImportFile(
   }
   console.log('[IMPORT] validation-complete');
 
-  // 2. Read ArrayBuffer & calculate SHA-256
+  // 2. Read ArrayBuffer & Calculate SHA-256
   onProgress?.('Membaca berkas dan menghitung checksum SHA-256...');
   console.log('[IMPORT] hash-start');
   const buffer = await file.arrayBuffer();
@@ -305,7 +386,7 @@ export async function processImportFile(
       setDoc(importFileRef, newImportFile),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error('Proses upload terlalu lama. Periksa koneksi dan konfigurasi Firebase.')),
+          () => reject(new Error('Proses simpan Firestore timeout.')),
           10000
         )
       ),
@@ -359,15 +440,12 @@ export async function processImportFile(
     };
   } catch (error) {
     console.error('[IMPORT] firestore-write-error:', error);
-    if (error instanceof Error && error.message.includes('terlalu lama')) {
-      throw error;
-    }
     handleFirestoreError(error, OperationType.WRITE, `businesses/${businessId}/importFiles/${importFileId}`);
   }
 }
 
 // ==========================================
-// 4. MANUAL REPORT TYPE SELECTION (FALLBACK)
+// 5. MANUAL REPORT TYPE SELECTION (FALLBACK)
 // ==========================================
 
 export async function setManualReportType(
@@ -411,7 +489,7 @@ export async function setManualReportType(
 }
 
 // ==========================================
-// 5. QUERY IMPORT FILES
+// 6. QUERY IMPORT FILES
 // ==========================================
 
 export async function getImportFiles(
