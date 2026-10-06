@@ -1,0 +1,6 @@
+{
+  "name": "MarketFlow BI",
+  "description": "Marketplace Business Intelligence SaaS for Indonesian UMKM and online sellers. Dari data marketplace menjadi keputusan bisnis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

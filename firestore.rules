@@ -1,0 +1,326 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isMemberDoc(businessId, userId) {
+      return exists(/databases/$(database)/documents/businesses/$(businessId)/members/$(userId));
+    }
+
+    function getMemberDoc(businessId, userId) {
+      return get(/databases/$(database)/documents/businesses/$(businessId)/members/$(userId)).data;
+    }
+
+    function isBusinessMember(businessId) {
+      return isSignedIn() &&
+        isMemberDoc(businessId, request.auth.uid) &&
+        getMemberDoc(businessId, request.auth.uid).status == 'ACTIVE';
+    }
+
+    function hasRole(businessId, allowedRoles) {
+      return isBusinessMember(businessId) &&
+        (getMemberDoc(businessId, request.auth.uid).role in allowedRoles);
+    }
+
+    function isBusinessOwner(businessId) {
+      return hasRole(businessId, ['OWNER']);
+    }
+
+    // ==========================================
+    // 1. Users Collection
+    // ==========================================
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId);
+      allow list: if isSignedIn() && (request.auth.uid == userId);
+      allow create: if isSignedIn() &&
+        request.auth.uid == userId &&
+        incoming().uid == userId &&
+        incoming().displayName is string &&
+        incoming().displayName.size() <= 128 &&
+        incoming().email is string &&
+        incoming().email.size() <= 256 &&
+        incoming().onboardingCompleted is bool &&
+        incoming().createdAt is timestamp &&
+        incoming().updatedAt is timestamp;
+      allow update: if isSignedIn() &&
+        request.auth.uid == userId &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    // ==========================================
+    // 2. Businesses Collection
+    // ==========================================
+    match /businesses/{businessId} {
+      allow get: if isSignedIn() && (
+        isBusinessMember(businessId) ||
+        resource.data.ownerId == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid ||
+        isBusinessMember(businessId)
+      );
+      allow create: if isSignedIn() &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().name is string &&
+        incoming().name.size() >= 2 &&
+        incoming().name.size() <= 128 &&
+        incoming().businessType in ['UMKM', 'ONLINE_SELLER', 'RETAIL', 'DISTRIBUTOR', 'OTHER'] &&
+        incoming().currency == 'IDR' &&
+        incoming().timezone == 'Asia/Jakarta' &&
+        incoming().status == 'ACTIVE' &&
+        incoming().createdAt is timestamp &&
+        incoming().updatedAt is timestamp;
+      allow update: if isSignedIn() &&
+        isBusinessOwner(businessId) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt is timestamp;
+      allow delete: if false;
+
+      // ------------------------------------------
+      // Members Subcollection
+      // ------------------------------------------
+      match /members/{memberUserId} {
+        allow get, list: if isSignedIn() && (
+          isBusinessMember(businessId) ||
+          request.auth.uid == memberUserId
+        );
+        allow create: if isSignedIn() && (
+          isBusinessOwner(businessId) ||
+          (
+            // Allow creator to link themselves as OWNER during business setup
+            request.auth.uid == memberUserId &&
+            incoming().userId == request.auth.uid &&
+            incoming().role == 'OWNER' &&
+            incoming().status == 'ACTIVE' &&
+            (
+              (existsAfter(/databases/$(database)/documents/businesses/$(businessId)) &&
+               getAfter(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == request.auth.uid) ||
+              (exists(/databases/$(database)/documents/businesses/$(businessId)) &&
+               get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == request.auth.uid)
+            )
+          )
+        );
+        allow update: if isSignedIn() && isBusinessOwner(businessId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if isSignedIn() && isBusinessOwner(businessId) &&
+          memberUserId != request.auth.uid; // Owner cannot delete themselves
+      }
+
+      // ------------------------------------------
+      // Stores Subcollection
+      // ------------------------------------------
+      match /stores/{storeId} {
+        allow get, list: if isSignedIn() && isBusinessMember(businessId);
+        allow create: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN']) &&
+          incoming().businessId == businessId &&
+          incoming().marketplace in ['SHOPEE', 'TIKTOK', 'TOKOPEDIA'] &&
+          incoming().storeName is string &&
+          incoming().storeName.size() >= 2 &&
+          incoming().storeName.size() <= 128 &&
+          incoming().status in ['ACTIVE', 'INACTIVE'] &&
+          incoming().createdAt is timestamp &&
+          incoming().updatedAt is timestamp;
+        allow update: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN']) &&
+          incoming().businessId == existing().businessId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if isSignedIn() && hasRole(businessId, ['OWNER']);
+      }
+
+      // ------------------------------------------
+      // Products Subcollection
+      // ------------------------------------------
+      match /products/{productId} {
+        allow get, list: if isSignedIn() && isBusinessMember(businessId);
+        allow create: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'MANAGER']) &&
+          incoming().businessId == businessId &&
+          incoming().name is string &&
+          incoming().name.size() >= 2 &&
+          incoming().name.size() <= 200 &&
+          incoming().status in ['ACTIVE', 'INACTIVE'] &&
+          incoming().createdAt is timestamp &&
+          incoming().updatedAt is timestamp;
+        allow update: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'MANAGER']) &&
+          incoming().businessId == existing().businessId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if isSignedIn() && hasRole(businessId, ['OWNER', 'ADMIN']);
+
+        match /variants/{variantId} {
+          allow get, list: if isSignedIn() && isBusinessMember(businessId);
+          allow create, update: if isSignedIn() &&
+            hasRole(businessId, ['OWNER', 'ADMIN', 'MANAGER']) &&
+            incoming().businessId == businessId &&
+            incoming().productId == productId &&
+            incoming().name is string &&
+            incoming().name.size() <= 100;
+          allow delete: if isSignedIn() && hasRole(businessId, ['OWNER', 'ADMIN']);
+        }
+      }
+
+      // ------------------------------------------
+      // SKUs Subcollection
+      // ------------------------------------------
+      match /skus/{skuId} {
+        allow get, list: if isSignedIn() && isBusinessMember(businessId);
+        allow create: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'MANAGER']) &&
+          incoming().businessId == businessId &&
+          incoming().skuCode is string &&
+          incoming().skuCode.size() >= 1 &&
+          incoming().skuCode.size() <= 64 &&
+          incoming().status in ['ACTIVE', 'INACTIVE'] &&
+          incoming().createdAt is timestamp &&
+          incoming().updatedAt is timestamp;
+        allow update: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'MANAGER']) &&
+          incoming().businessId == existing().businessId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if isSignedIn() && hasRole(businessId, ['OWNER', 'ADMIN']);
+      }
+
+      // ------------------------------------------
+      // Product Costs (HPP) Subcollection
+      // ------------------------------------------
+      match /productCosts/{costId} {
+        allow get, list: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE', 'MANAGER']);
+        allow create: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE']) &&
+          incoming().businessId == businessId &&
+          incoming().skuId is string &&
+          incoming().costType in ['PRODUCT_COST', 'PACKAGING', 'BOX', 'BUBBLE_WRAP', 'STICKER', 'LABEL', 'OTHER'] &&
+          incoming().amount is number &&
+          incoming().amount >= 0 &&
+          incoming().createdAt is timestamp &&
+          incoming().updatedAt is timestamp;
+        allow update: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE']) &&
+          incoming().businessId == existing().businessId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if isSignedIn() && hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE']);
+      }
+
+      // ------------------------------------------
+      // Store SKU Mappings Subcollection
+      // ------------------------------------------
+      match /storeSkuMappings/{mappingId} {
+        allow get, list: if isSignedIn() && isBusinessMember(businessId);
+        allow create: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'MANAGER']) &&
+          incoming().businessId == businessId &&
+          incoming().storeId is string &&
+          incoming().internalSkuId is string &&
+          incoming().externalSku is string &&
+          incoming().externalSku.size() >= 1 &&
+          incoming().externalSku.size() <= 128 &&
+          incoming().status in ['ACTIVE', 'INACTIVE'] &&
+          incoming().createdAt is timestamp &&
+          incoming().updatedAt is timestamp;
+        allow update: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'MANAGER']) &&
+          incoming().businessId == existing().businessId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if isSignedIn() && hasRole(businessId, ['OWNER', 'ADMIN']);
+      }
+
+      // ------------------------------------------
+      // Import Files Subcollection
+      // ------------------------------------------
+      match /importFiles/{importFileId} {
+        allow get, list: if isSignedIn() && isBusinessMember(businessId);
+        allow create: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE', 'MANAGER']) &&
+          incoming().businessId == businessId &&
+          incoming().uploadedBy == request.auth.uid &&
+          incoming().originalFileName is string &&
+          incoming().fileHash is string &&
+          incoming().storagePath is string &&
+          incoming().createdAt is timestamp &&
+          incoming().updatedAt is timestamp;
+        allow update: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE', 'MANAGER']) &&
+          incoming().businessId == existing().businessId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if false; // Raw import records are preserved for auditability
+      }
+
+      // ------------------------------------------
+      // Import Batches Subcollection
+      // ------------------------------------------
+      match /importBatches/{batchId} {
+        allow get, list: if isSignedIn() && isBusinessMember(businessId);
+        allow create: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE', 'MANAGER']) &&
+          incoming().businessId == businessId &&
+          incoming().createdBy == request.auth.uid &&
+          incoming().createdAt is timestamp &&
+          incoming().updatedAt is timestamp;
+        allow update: if isSignedIn() &&
+          hasRole(businessId, ['OWNER', 'ADMIN', 'FINANCE', 'MANAGER']) &&
+          incoming().businessId == existing().businessId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp;
+        allow delete: if false;
+      }
+
+      // ------------------------------------------
+      // Audit Logs Subcollection
+      // ------------------------------------------
+      match /auditLogs/{auditId} {
+        allow get, list: if isSignedIn() && hasRole(businessId, ['OWNER', 'ADMIN']);
+        allow create: if isSignedIn() &&
+          isBusinessMember(businessId) &&
+          incoming().businessId == businessId &&
+          incoming().userId == request.auth.uid &&
+          incoming().action is string &&
+          incoming().action.size() <= 64 &&
+          incoming().createdAt is timestamp;
+        allow update, delete: if false; // Audit logs are strictly immutable
+      }
+    }
+
+    // ==========================================
+    // 3. Marketplaces Global Master Collection
+    // ==========================================
+    match /marketplaces/{marketplaceId} {
+      allow get, list: if isSignedIn();
+      allow write: if false;
+    }
+  }
+}

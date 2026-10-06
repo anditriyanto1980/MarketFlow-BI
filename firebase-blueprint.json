@@ -1,0 +1,256 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account profile document tied to Firebase Auth UID",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "phoneNumber": { "type": "string", "maxLength": 32 },
+        "onboardingCompleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "onboardingCompleted", "createdAt", "updatedAt"]
+    },
+    "Business": {
+      "title": "Business Workspace",
+      "description": "Tenant entity representing the seller organization/business",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "businessType": {
+          "type": "string",
+          "enum": ["UMKM", "ONLINE_SELLER", "RETAIL", "DISTRIBUTOR", "OTHER"]
+        },
+        "currency": { "type": "string", "enum": ["IDR"] },
+        "timezone": { "type": "string", "enum": ["Asia/Jakarta"] },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "businessType", "currency", "timezone", "ownerId", "status", "createdAt", "updatedAt"]
+    },
+    "BusinessMember": {
+      "title": "Business Member",
+      "description": "Membership document linking a user to a business workspace with an RBAC role",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "role": {
+          "type": "string",
+          "enum": ["OWNER", "ADMIN", "FINANCE", "MANAGER", "VIEWER"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ACTIVE", "INVITED", "SUSPENDED"]
+        },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "role", "status", "joinedAt", "createdAt", "updatedAt"]
+    },
+    "Store": {
+      "title": "Marketplace Store",
+      "description": "Connected marketplace channel account for a business",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "marketplace": { "type": "string", "enum": ["SHOPEE", "TIKTOK", "TOKOPEDIA"] },
+        "storeName": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "externalStoreId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "marketplace", "storeName", "status", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product Master",
+      "description": "Internal product definition in the catalog",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "category": { "type": "string", "maxLength": 100 },
+        "brand": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "name", "status", "createdAt", "updatedAt"]
+    },
+    "ProductVariant": {
+      "title": "Product Variant",
+      "description": "Variant option under a master product",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "productId", "name", "createdAt", "updatedAt"]
+    },
+    "SKU": {
+      "title": "Internal SKU",
+      "description": "Unique internal stock keeping unit code mapped to product variants",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "variantId": { "type": "string", "maxLength": 128 },
+        "skuCode": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "barcode": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "productId", "skuCode", "status", "createdAt", "updatedAt"]
+    },
+    "ProductCost": {
+      "title": "Product Cost (HPP)",
+      "description": "Component cost item (HPP/packaging/shipping supplies) for margin calculation",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "skuId": { "type": "string", "maxLength": 128 },
+        "costType": {
+          "type": "string",
+          "enum": ["PRODUCT_COST", "PACKAGING", "BOX", "BUBBLE_WRAP", "STICKER", "LABEL", "OTHER"]
+        },
+        "amount": { "type": "number" },
+        "effectiveFrom": { "type": "string", "format": "date-time" },
+        "effectiveTo": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "skuId", "costType", "amount", "effectiveFrom", "createdAt", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Immutable security and activity audit entry",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "maxLength": 64 },
+        "entityType": { "type": "string", "maxLength": 64 },
+        "entityId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "userId", "action", "createdAt"]
+    },
+    "StoreSkuMapping": {
+      "title": "Store SKU Mapping",
+      "description": "Mapping from marketplace external SKU to internal MarketFlow SKU",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "storeId": { "type": "string", "maxLength": 128 },
+        "internalSkuId": { "type": "string", "maxLength": 128 },
+        "externalSku": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "externalProductName": { "type": "string", "maxLength": 200 },
+        "externalVariantName": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "storeId", "internalSkuId", "externalSku", "status", "createdAt", "updatedAt"]
+    },
+    "ImportFile": {
+      "title": "Import File Record",
+      "description": "Metadata and raw storage tracking for uploaded marketplace spreadsheets",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "uploadedBy": { "type": "string", "maxLength": 128 },
+        "originalFileName": { "type": "string", "maxLength": 256 },
+        "storagePath": { "type": "string", "maxLength": 512 },
+        "fileExtension": { "type": "string", "enum": ["xlsx", "csv"] },
+        "fileSizeBytes": { "type": "number" },
+        "fileHash": { "type": "string", "maxLength": 128 },
+        "detectedMarketplace": { "type": "string", "enum": ["SHOPEE", "UNKNOWN"] },
+        "detectedReportType": { "type": "string", "enum": ["SHOPEE_ORDER_ALL", "SHOPEE_INCOME", "UNKNOWN"] },
+        "detectionConfidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "detectionMethod": { "type": "string", "enum": ["HEADER_SIGNATURE", "FILENAME_SIGNATURE", "MANUAL", "UNKNOWN"] },
+        "status": { "type": "string", "enum": ["UPLOADING", "UPLOADED", "READING", "DETECTED", "NEEDS_REVIEW", "FAILED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "uploadedBy", "originalFileName", "storagePath", "fileExtension", "fileSizeBytes", "fileHash", "status", "createdAt", "updatedAt"]
+    },
+    "ImportBatch": {
+      "title": "Import Batch",
+      "description": "Execution batch linked to an import file ready for mapping or processing",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "maxLength": 128 },
+        "importFileId": { "type": "string", "maxLength": 128 },
+        "reportType": { "type": "string", "enum": ["SHOPEE_ORDER_ALL", "SHOPEE_INCOME", "UNKNOWN"] },
+        "status": { "type": "string", "enum": ["CREATED", "READY_FOR_MAPPING", "PROCESSING", "COMPLETED", "FAILED"] },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "importFileId", "reportType", "status", "createdBy", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles indexed by Auth UID"
+    },
+    "/businesses/{businessId}": {
+      "schema": { "$ref": "#/entities/Business" },
+      "description": "Business organizations/workspaces"
+    },
+    "/businesses/{businessId}/members/{userId}": {
+      "schema": { "$ref": "#/entities/BusinessMember" },
+      "description": "User memberships within a business with RBAC role"
+    },
+    "/businesses/{businessId}/stores/{storeId}": {
+      "schema": { "$ref": "#/entities/Store" },
+      "description": "Marketplace channels tied to a business"
+    },
+    "/businesses/{businessId}/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Catalog products for a business"
+    },
+    "/businesses/{businessId}/products/{productId}/variants/{variantId}": {
+      "schema": { "$ref": "#/entities/ProductVariant" },
+      "description": "Variants belonging to a product"
+    },
+    "/businesses/{businessId}/skus/{skuId}": {
+      "schema": { "$ref": "#/entities/SKU" },
+      "description": "Internal stock keeping units for a business"
+    },
+    "/businesses/{businessId}/productCosts/{costId}": {
+      "schema": { "$ref": "#/entities/ProductCost" },
+      "description": "HPP cost records for profit calculations"
+    },
+    "/businesses/{businessId}/storeSkuMappings/{mappingId}": {
+      "schema": { "$ref": "#/entities/StoreSkuMapping" },
+      "description": "Marketplace SKU mappings for a business"
+    },
+    "/businesses/{businessId}/importFiles/{importFileId}": {
+      "schema": { "$ref": "#/entities/ImportFile" },
+      "description": "Uploaded marketplace report files and detection metadata"
+    },
+    "/businesses/{businessId}/importBatches/{batchId}": {
+      "schema": { "$ref": "#/entities/ImportBatch" },
+      "description": "Import batches prepared for column mapping"
+    },
+    "/businesses/{businessId}/auditLogs/{auditId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit trails for business actions"
+    }
+  }
+}
