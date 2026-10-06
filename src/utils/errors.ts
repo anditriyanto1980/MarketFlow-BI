@@ -93,8 +93,20 @@ export function getReadableErrorMessage(error: unknown): string {
     if (msg.includes('network-request-failed') || msg.includes('the client is offline')) {
       return 'Koneksi jaringan terputus. Periksa koneksi internet Anda.';
     }
+    if (msg.includes('storage/unauthorized')) {
+      return 'Anda tidak memiliki izin untuk mengunggah file ke workspace ini.';
+    }
+    if (msg.includes('storage/unknown')) {
+      return 'Terjadi masalah saat menyimpan file. Silakan coba lagi.';
+    }
+    if (msg.includes('storage/canceled') || msg.includes('Proses upload terlalu lama') || msg.includes('storage/retry-limit-exceeded')) {
+      return 'Proses upload terlalu lama. Periksa koneksi dan konfigurasi Firebase.';
+    }
+    if (msg.includes('storage/bucket-not-found')) {
+      return 'Bucket penyimpanan Cloud Storage tidak ditemukan. Periksa konfigurasi project Firebase.';
+    }
     if (msg.includes('Missing or insufficient permissions') || msg.includes('permission-denied')) {
-      return 'Akses ditolak: Operasi ini dibatasi oleh aturan keamanan bisnis.';
+      return 'Izin akses Firebase belum sesuai.';
     }
     if (msg.includes('Quota exceeded')) {
       return 'Batas kuota database tercapai untuk hari ini.';

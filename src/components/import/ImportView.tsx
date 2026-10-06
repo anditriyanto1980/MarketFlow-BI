@@ -104,8 +104,8 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
       return;
     }
 
-    if (file.size > 25 * 1024 * 1024) {
-      setErrorMessage('Ukuran file melebihi batas maksimal 25 MB.');
+    if (file.size > 50 * 1024 * 1024) {
+      setErrorMessage('Ukuran file terlalu besar. Maksimal 50 MB.');
       return;
     }
 
@@ -123,27 +123,25 @@ export const ImportView: React.FC<ImportViewProps> = ({ onNavigateToHistory }) =
 
     try {
       setProcessingStage('Membaca berkas dan menghitung checksum SHA-256...');
-      await new Promise((r) => setTimeout(r, 100));
 
-      setProcessingStage('Mengecek duplikasi & mengunggah raw file ke Cloud Storage...');
       const result = await processImportFile(
         currentBusiness.id,
         currentUser.uid,
         userProfile?.displayName || 'Pengguna',
-        file
+        file,
+        undefined,
+        (stage) => setProcessingStage(stage)
       );
 
       if (result.isDuplicate) {
         setDuplicateFile(result.importFile);
-        setIsProcessing(false);
         return;
       }
 
-      setProcessingStage('Mengekstrak header & menjalankan deteksi tanda tangan Shopee...');
       setProcessedFile(result.importFile);
       setDetectionResult(result.detectionResult);
     } catch (err: unknown) {
-      console.error('Import processing failed:', err);
+      console.error('[IMPORT] Upload flow failed:', err);
       setErrorMessage(getReadableErrorMessage(err));
     } finally {
       setIsProcessing(false);

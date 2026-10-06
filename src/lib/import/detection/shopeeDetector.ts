@@ -65,13 +65,14 @@ export function detectShopeeReport(
   let marketplace: 'SHOPEE' | 'UNKNOWN' = 'UNKNOWN';
 
   const scoreDiff = Math.abs(orderAllScore - incomeScore);
+  const isAmbiguous = orderAllScore >= 35 && incomeScore >= 35;
 
-  // Ambiguity guard: If both scores are close or both are low, mark as UNKNOWN/LOW
+  // Ambiguity guard: If both scores are low, or both scores are strong and close
   if (orderAllScore < 30 && incomeScore < 30) {
     reportType = 'UNKNOWN';
     confidence = 'LOW';
     marketplace = 'UNKNOWN';
-  } else if (scoreDiff < 15 && orderAllScore > 25 && incomeScore > 25) {
+  } else if (isAmbiguous && scoreDiff < 30) {
     // Both matched heavily, ambiguous collision
     reportType = 'UNKNOWN';
     confidence = 'LOW';
@@ -79,7 +80,7 @@ export function detectShopeeReport(
   } else if (orderAllScore > incomeScore) {
     reportType = 'SHOPEE_ORDER_ALL';
     marketplace = 'SHOPEE';
-    if (orderAllScore >= 60 && scoreDiff >= 25) {
+    if (!isAmbiguous && orderAllScore >= 60 && scoreDiff >= 30) {
       confidence = 'HIGH';
     } else if (orderAllScore >= 35) {
       confidence = 'MEDIUM';
@@ -89,7 +90,7 @@ export function detectShopeeReport(
   } else {
     reportType = 'SHOPEE_INCOME';
     marketplace = 'SHOPEE';
-    if (incomeScore >= 60 && scoreDiff >= 25) {
+    if (!isAmbiguous && incomeScore >= 60 && scoreDiff >= 30) {
       confidence = 'HIGH';
     } else if (incomeScore >= 35) {
       confidence = 'MEDIUM';

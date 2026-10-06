@@ -15,6 +15,10 @@ export const db = firebaseConfig.firestoreDatabaseId
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
+// Prevent storage from retrying for 10 minutes on network or bucket failures
+storage.maxUploadRetryTime = 12000;
+storage.maxOperationRetryTime = 12000;
+
 // Connectivity check as required by Firebase Integration Skill
 async function testFirestoreConnection() {
   try {
